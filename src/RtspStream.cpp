@@ -26,6 +26,12 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include "RtspStream.h"
 
 
+// By default, we request that the server stream its data using RTP/UDP.
+// If, instead, you want to request that the server stream via RTP-over-TCP, change the following to True:
+#define REQUEST_STREAMING_OVER_TCP False
+
+
+
 typedef boost::function<void(stream::CFrame const&)> StreamCallback;
 
 
@@ -112,6 +118,7 @@ public:
   MediaSubsessionIterator* iter;
   MediaSession* session;
   MediaSubsession* subsession;
+  Boolean streamUsingTcp;
   TaskToken streamTimerTask;
   double duration;
   StreamCallback callback;
@@ -240,10 +247,6 @@ void continueAfterDESCRIBE(RTSPClient* rtspClient, int resultCode, char* resultS
   shutdownStream(rtspClient);
 }
 
-// By default, we request that the server stream its data using RTP/UDP.
-// If, instead, you want to request that the server stream via RTP-over-TCP, change the following to True:
-#define REQUEST_STREAMING_OVER_TCP False
-
 void setupNextSubsession(RTSPClient* rtspClient) {
   UsageEnvironment& env = rtspClient->envir(); // alias
   StreamClientState& scs = ((ourRTSPClient*)rtspClient)->scs; // alias
@@ -263,7 +266,7 @@ void setupNextSubsession(RTSPClient* rtspClient) {
       env << ")\n";
 
       // Continue setting up this subsession, by sending a RTSP "SETUP" command:
-      rtspClient->sendSetupCommand(*scs.subsession, continueAfterSETUP, False, REQUEST_STREAMING_OVER_TCP);
+      rtspClient->sendSetupCommand(*scs.subsession, continueAfterSETUP, False, scs.streamUsingTcp);
     }
     return;
   }
@@ -279,12 +282,18 @@ void setupNextSubsession(RTSPClient* rtspClient) {
 }
 
 void continueAfterSETUP(RTSPClient* rtspClient, int resultCode, char* resultString) {
-  do {
-    UsageEnvironment& env = rtspClient->envir(); // alias
-    StreamClientState& scs = ((ourRTSPClient*)rtspClient)->scs; // alias
+  bool setupAgain = false;
+  UsageEnvironment& env = rtspClient->envir(); // alias
+  StreamClientState& scs = ((ourRTSPClient*)rtspClient)->scs; // alias
 
+  do {
     if (resultCode != 0) {
       env << *rtspClient << "Failed to set up the \"" << *scs.subsession << "\" subsession: " << resultString << "\n";
+      if (resultCode == 461 && !scs.streamUsingTcp) {
+        // using tcp to setup again
+        setupAgain = true;
+        scs.streamUsingTcp = True;
+      }
       break;
     }
 
@@ -319,8 +328,13 @@ void continueAfterSETUP(RTSPClient* rtspClient, int resultCode, char* resultStri
   } while (0);
   delete[] resultString;
 
-  // Set up the next subsession, if any:
-  setupNextSubsession(rtspClient);
+  if (setupAgain) {
+    // Continue setting up this subsession, by sending a RTSP "SETUP" command:
+    rtspClient->sendSetupCommand(*scs.subsession, continueAfterSETUP, False, scs.streamUsingTcp);
+  } else {
+    // Set up the next subsession, if any:
+    setupNextSubsession(rtspClient);
+  }
 }
 
 void continueAfterPLAY(RTSPClient* rtspClient, int resultCode, char* resultString) {
@@ -469,7 +483,7 @@ ourRTSPClient::~ourRTSPClient() {
 // Implementation of "StreamClientState":
 
 StreamClientState::StreamClientState()
-  : iter(NULL), session(NULL), subsession(NULL), streamTimerTask(NULL), duration(0.0) {
+  : iter(NULL), session(NULL), subsession(NULL), streamUsingTcp(REQUEST_STREAMING_OVER_TCP), streamTimerTask(NULL), duration(0.0) {
 }
 
 StreamClientState::~StreamClientState() {
