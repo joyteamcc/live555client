@@ -46,6 +46,7 @@ void continueAfterPLAY(RTSPClient* rtspClient, int resultCode, char* resultStrin
 void subsessionAfterPlaying(void* clientData); // called when a stream's subsession (e.g., audio or video substream) ends
 void subsessionByeHandler(void* clientData); // called when a RTCP "BYE" is received for a subsession
 void streamTimerHandler(void* clientData);
+void checkDisconnectHandler(void* clientData);
   // called at the end of a stream's expected duration (if the stream has not already signaled its end using a RTCP "BYE")
 
 // The main streaming routine (for each "rtsp://" URL):
@@ -122,6 +123,8 @@ public:
   TaskToken streamTimerTask;
   double duration;
   StreamCallback callback;
+  int disconnectCounter;
+  TaskToken checkDisconnectTask;
 };
 
 // If you're streaming just a single stream (i.e., just from a single URL, once), then you can define and use just a single
@@ -132,18 +135,20 @@ public:
 class ourRTSPClient: public RTSPClient {
 public:
   static ourRTSPClient* createNew(UsageEnvironment& env, char const* rtspURL,
+          volatile char* eventLoopWatchVariable,
 				  int verbosityLevel = 0,
 				  char const* applicationName = NULL,
 				  portNumBits tunnelOverHTTPPortNum = 0);
 
 protected:
-  ourRTSPClient(UsageEnvironment& env, char const* rtspURL,
+  ourRTSPClient(UsageEnvironment& env, char const* rtspURL, volatile char* eventLoopWatchVariable,
 		int verbosityLevel, char const* applicationName, portNumBits tunnelOverHTTPPortNum);
     // called only by createNew();
   virtual ~ourRTSPClient();
 
 public:
   StreamClientState scs;
+  volatile char* eventLoopWatchVariable;
 };
 
 // Define a data sink (a subclass of "MediaSink") to receive the data for each subsession (i.e., each audio or video 'substream').
@@ -185,12 +190,12 @@ private:
 
 #define RTSP_CLIENT_VERBOSITY_LEVEL 1 // by default, print verbose output from each "RTSPClient"
 
-static unsigned rtspClientCount = 0; // Counts how many streams (i.e., "RTSPClient"s) are currently in use.
+//static unsigned rtspClientCount = 0; // Counts how many streams (i.e., "RTSPClient"s) are currently in use.
 
-void openURL(UsageEnvironment& env, char const* progName, char const* rtspURL, StreamCallback callback) {
+void openURL(UsageEnvironment& env, char const* progName, char const* rtspURL, StreamCallback callback, volatile char* eventLoopWatchVariable) {
   // Begin by creating a "RTSPClient" object.  Note that there is a separate "RTSPClient" object for each stream that we wish
   // to receive (even if more than stream uses the same "rtsp://" URL).
-  ourRTSPClient* rtspClient = ourRTSPClient::createNew(env, rtspURL, RTSP_CLIENT_VERBOSITY_LEVEL, progName);
+  ourRTSPClient* rtspClient = ourRTSPClient::createNew(env, rtspURL, eventLoopWatchVariable, RTSP_CLIENT_VERBOSITY_LEVEL, progName);
   if (rtspClient == NULL) {
     env << "Failed to create a RTSP client for URL \"" << rtspURL << "\": " << env.getResultMsg() << "\n";
     return;
@@ -199,12 +204,12 @@ void openURL(UsageEnvironment& env, char const* progName, char const* rtspURL, S
   // set stream callback
   rtspClient->scs.callback = callback;
 
-  ++rtspClientCount;
+  //++rtspClientCount;
 
   // Next, send a RTSP "DESCRIBE" command, to get a SDP description for the stream.
   // Note that this command - like all RTSP commands - is sent asynchronously; we do not block, waiting for a response.
   // Instead, the following function call returns immediately, and we handle the RTSP response later, from within the event loop:
-  rtspClient->sendDescribeCommand(continueAfterDESCRIBE); 
+  rtspClient->sendDescribeCommand(continueAfterDESCRIBE);
 }
 
 
@@ -234,6 +239,9 @@ void continueAfterDESCRIBE(RTSPClient* rtspClient, int resultCode, char* resultS
       env << *rtspClient << "This session has no media subsessions (i.e., no \"m=\" lines)\n";
       break;
     }
+
+    unsigned uSecsToDelay = (unsigned)(1000000);
+    scs.checkDisconnectTask = env.taskScheduler().scheduleDelayedTask(uSecsToDelay, (TaskFunc*)checkDisconnectHandler, rtspClient);
 
     // Then, create and set up our data source objects for the session.  We do this by iterating over the session's 'subsessions',
     // calling "MediaSubsession::initiate()", and then sending a RTSP "SETUP" command, on each one.
@@ -419,6 +427,22 @@ void streamTimerHandler(void* clientData) {
   shutdownStream(rtspClient);
 }
 
+void checkDisconnectHandler(void* clientData) {
+  ourRTSPClient* rtspClient = (ourRTSPClient*)clientData;
+  UsageEnvironment& env = rtspClient->envir(); // alias
+  StreamClientState& scs = rtspClient->scs; // alias
+
+  env << *rtspClient << "check disconnect handler, counter:" << scs.disconnectCounter << "\n";
+  if (++scs.disconnectCounter < 5) {
+    // next round
+    unsigned uSecsToDelay = (unsigned)(1000000);
+    scs.checkDisconnectTask = env.taskScheduler().scheduleDelayedTask(uSecsToDelay, (TaskFunc*)checkDisconnectHandler, rtspClient);
+    return;
+  }
+
+  shutdownStream(rtspClient);
+}
+
 void shutdownStream(RTSPClient* rtspClient, int exitCode) {
   UsageEnvironment& env = rtspClient->envir(); // alias
   StreamClientState& scs = ((ourRTSPClient*)rtspClient)->scs; // alias
@@ -461,19 +485,22 @@ void shutdownStream(RTSPClient* rtspClient, int exitCode) {
     exit(exitCode);
   }
 #endif
+  auto eventLoopWatchVariable = ((ourRTSPClient*)rtspClient)->eventLoopWatchVariable;
+  *eventLoopWatchVariable = 1;
 }
 
 
 // Implementation of "ourRTSPClient":
 
-ourRTSPClient* ourRTSPClient::createNew(UsageEnvironment& env, char const* rtspURL,
+ourRTSPClient* ourRTSPClient::createNew(UsageEnvironment& env, char const* rtspURL, volatile char* eventLoopWatchVariable,
 					int verbosityLevel, char const* applicationName, portNumBits tunnelOverHTTPPortNum) {
-  return new ourRTSPClient(env, rtspURL, verbosityLevel, applicationName, tunnelOverHTTPPortNum);
+  return new ourRTSPClient(env, rtspURL, eventLoopWatchVariable, verbosityLevel, applicationName, tunnelOverHTTPPortNum);
 }
 
-ourRTSPClient::ourRTSPClient(UsageEnvironment& env, char const* rtspURL,
+ourRTSPClient::ourRTSPClient(UsageEnvironment& env, char const* rtspURL, volatile char* eventLoopWatchVariable,
 			     int verbosityLevel, char const* applicationName, portNumBits tunnelOverHTTPPortNum)
-  : RTSPClient(env,rtspURL, verbosityLevel, applicationName, tunnelOverHTTPPortNum, -1) {
+  : RTSPClient(env,rtspURL, verbosityLevel, applicationName, tunnelOverHTTPPortNum, -1)
+  , eventLoopWatchVariable(eventLoopWatchVariable) {
 }
 
 ourRTSPClient::~ourRTSPClient() {
@@ -483,7 +510,8 @@ ourRTSPClient::~ourRTSPClient() {
 // Implementation of "StreamClientState":
 
 StreamClientState::StreamClientState()
-  : iter(NULL), session(NULL), subsession(NULL), streamUsingTcp(REQUEST_STREAMING_OVER_TCP), streamTimerTask(NULL), duration(0.0) {
+  : iter(NULL), session(NULL), subsession(NULL), streamUsingTcp(REQUEST_STREAMING_OVER_TCP)
+  , streamTimerTask(NULL), duration(0.0), disconnectCounter(0), checkDisconnectTask(NULL) {
 }
 
 StreamClientState::~StreamClientState() {
@@ -493,6 +521,7 @@ StreamClientState::~StreamClientState() {
     UsageEnvironment& env = session->envir(); // alias
 
     env.taskScheduler().unscheduleDelayedTask(streamTimerTask);
+    env.taskScheduler().unscheduleDelayedTask(checkDisconnectTask);
     Medium::close(session);
   }
 }
@@ -549,6 +578,9 @@ void DummySink::afterGettingFrame(unsigned frameSize, unsigned numTruncatedBytes
 #endif
   envir() << "\n";
 #endif
+
+  auto rtspClient = (ourRTSPClient*)fSubsession.miscPtr;
+  rtspClient->scs.disconnectCounter = 0;  // reset counter
 
 #if 0
     if (strcmp(fSubsession.mediumName(), "video") == 0)
@@ -707,20 +739,38 @@ bool CRtspStreamSource::stop()
 void CRtspStreamSource::threadProc()
 {
     tracef("__begin!\n");
+    int sleepms = 0;
 
-    // Begin by setting up our usage environment:
-    TaskScheduler* scheduler = BasicTaskScheduler::createNew();
-    UsageEnvironment* env = BasicUsageEnvironment::createNew(*scheduler);
+    while (true) {
+      mEventLoopWatchVariable = 0;
 
-    // Open and start streaming
-    openURL(*env, "RtspClient", mUri.c_str(), boost::bind(&CRtspStreamSource::onStreamCallback, this, _1));
+      tracef("wait (%d)ms to open rtsp client...\n", sleepms);
+      auto sig = waitSignal(sleepms);
+      if (sig == SIGNAL_EXIT) {
+        tracef("exit by user stop!\n");
+        break;
+      }
 
-    // All subsequent activity takes place within the event loop:
-    env->taskScheduler().doEventLoop(&mEventLoopWatchVariable);
+      // Begin by setting up our usage environment:
+      TaskScheduler* scheduler = BasicTaskScheduler::createNew();
+      UsageEnvironment* env = BasicUsageEnvironment::createNew(*scheduler);
+
+      // Open and start streaming
+      openURL(*env, "RtspClient", mUri.c_str(), boost::bind(&CRtspStreamSource::onStreamCallback, this, _1), &mEventLoopWatchVariable);
+
+      // All subsequent activity takes place within the event loop:
+      env->taskScheduler().doEventLoop(&mEventLoopWatchVariable);
       // This function call does not return, unless, at some point in time, "mEventLoopWatchVariable" gets set to something non-zero.
 
-    env->reclaim(); env = NULL;
-    delete scheduler; scheduler = NULL;
+      env->reclaim(); env = NULL;
+      delete scheduler; scheduler = NULL;
+
+      if (sleepms == 0 || sleepms >= 8000) {
+        sleepms = 2000;
+      } else {
+        sleepms *= 2;
+      }
+    }
 
     tracef("__end!\n");
 }

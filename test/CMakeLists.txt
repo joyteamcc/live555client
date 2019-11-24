@@ -17,7 +17,7 @@ add_executable(test_rtsp_client
 )
 
 target_link_libraries(test_rtsp_client
-    live555_client
+    live555client
     stream wize miniboost
     liveMedia BasicUsageEnvironment UsageEnvironment groupsock
     ${BOARD_LIBS}

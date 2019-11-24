@@ -13,5 +13,5 @@ include_directories(
 
 file(GLOB_RECURSE HEADERFILES "../include/*" "*.h")
 aux_source_directory(. DIR_SRCS)
-add_library(live555_client ${DIR_SRCS} ${HEADERFILES})
+add_library(live555client ${DIR_SRCS} ${HEADERFILES})
 
