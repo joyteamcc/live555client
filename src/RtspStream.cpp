@@ -432,7 +432,7 @@ void checkDisconnectHandler(void* clientData) {
   UsageEnvironment& env = rtspClient->envir(); // alias
   StreamClientState& scs = rtspClient->scs; // alias
 
-  env << *rtspClient << "check disconnect handler, counter:" << scs.disconnectCounter << "\n";
+  //env << *rtspClient << "check disconnect handler, counter:" << scs.disconnectCounter << "\n";
   if (++scs.disconnectCounter < 5) {
     // next round
     unsigned uSecsToDelay = (unsigned)(1000000);
@@ -440,6 +440,7 @@ void checkDisconnectHandler(void* clientData) {
     return;
   }
 
+  env << *rtspClient << "shutdown stream, counter:" << scs.disconnectCounter << "\n";
   shutdownStream(rtspClient);
 }
 
@@ -558,7 +559,7 @@ void DummySink::afterGettingFrame(void* clientData, unsigned frameSize, unsigned
 }
 
 // If you don't want to see debugging output for each received frame, then comment out the following line:
-#define DEBUG_PRINT_EACH_RECEIVED_FRAME 1
+//#define DEBUG_PRINT_EACH_RECEIVED_FRAME 1
 
 void DummySink::afterGettingFrame(unsigned frameSize, unsigned numTruncatedBytes,
 				  struct timeval presentationTime, unsigned /*durationInMicroseconds*/) {
