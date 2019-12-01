@@ -181,6 +181,8 @@ private:
 
 private:
   StreamCallback mCallback;
+  wize::CBuffer  mSPS;
+  wize::CBuffer  mPPS;
   stream::CFrame mFrame;
   int            mSequence;
   u_int8_t* fReceiveBuffer;
@@ -636,21 +638,60 @@ void DummySink::afterGettingFrame(unsigned frameSize, unsigned numTruncatedBytes
             }
             else if (strcmp(fSubsession.codecName(), "H264") == 0)
             {
-                // create h264 video frame
-                static char h264head[] = {0x00, 0x00, 0x00, 0x01};
+                static char nalHead[] = {0x00, 0x00, 0x00, 0x01};
 
-                char frametype = stream::isIDR(fReceiveBuffer, frameSize) ? 'I' : 'P';
-                bool newformat = false;   // FIXME
-                mFrame = stream::CFrameFactory::createVideoFrame(
-                          channel, streamid, newformat, pts, mSequence, stream::ENCODE_H264, frametype,
-                          sizeof(h264head) + frameSize + numTruncatedBytes);
+                auto nalType = fReceiveBuffer[0] & 0x1f;
+                if (nalType == stream::NALU_TYPE_SPS) {
+                    // infof("sps comming! size(%d)\n", frameSize);
+                    mSPS.resize(0);
+                    mSPS.putBuffer(nalHead, sizeof(nalHead));
+                    mSPS.putBuffer(fReceiveBuffer, frameSize);
+                } else if (nalType == stream::NALU_TYPE_PPS) {
+                    // infof("pps comming! size(%d)\n", frameSize);
+                    mPPS.resize(0);
+                    mPPS.putBuffer(nalHead, sizeof(nalHead));
+                    mPPS.putBuffer(fReceiveBuffer, frameSize);
+                } else if (nalType == stream::NALU_TYPE_IDR) {
+                    // create h264 video I frame
+                    auto totalsize = mSPS.size() + mPPS.size() + sizeof(nalHead) + frameSize + numTruncatedBytes;
+                    auto codec = stream::ENCODE_H264;
+                    char frametype = 'I';
+                    bool newformat = false;   // FIXME
+                    // infof("create frame nal(%02x) type(%c) pts(%llu) len(%d)\n", nalType, frametype, pts, totalsize);
+                    mFrame = stream::CFrameFactory::createVideoFrame(
+                              channel, streamid, newformat, pts, mSequence,
+                              codec, frametype, totalsize);
 
-                uint8_t* ptr = (uint8_t*)mFrame.data();
-                memcpy(ptr, h264head, sizeof(h264head));
-                ptr += sizeof(h264head);
-                memcpy(ptr, fReceiveBuffer, frameSize);
+                    uint8_t* ptr = (uint8_t*)mFrame.data();
+                    memcpy(ptr, mSPS.getBuffer(), mSPS.size());
+                    ptr += mSPS.size();
+                    memcpy(ptr, mPPS.getBuffer(), mPPS.size());
+                    ptr += mPPS.size();
+                    memcpy(ptr, nalHead, sizeof(nalHead));
+                    ptr += sizeof(nalHead);
+                    memcpy(ptr, fReceiveBuffer, frameSize);
 
-                ++mSequence;
+                    ++mSequence;
+                } else if (nalType == stream::NALU_TYPE_SLICE) {
+                    // create h264 video P frame
+                    auto totalsize = sizeof(nalHead) + frameSize + numTruncatedBytes;
+                    auto codec = stream::ENCODE_H264;
+                    char frametype = 'P';
+                    bool newformat = false;
+                    // infof("create frame nal(%02x) type(%c) pts(%llu) len(%d)\n", nalType, frametype, pts, totalsize);
+                    mFrame = stream::CFrameFactory::createVideoFrame(
+                              channel, streamid, newformat, pts, mSequence,
+                              codec, frametype, totalsize);
+
+                    uint8_t* ptr = (uint8_t*)mFrame.data();
+                    memcpy(ptr, nalHead, sizeof(nalHead));
+                    ptr += sizeof(nalHead);
+                    memcpy(ptr, fReceiveBuffer, frameSize);
+
+                    ++mSequence;
+                } else {
+                    infof("ignored nal(%02x)\n", nalType);
+                }
             }
         }
         else if (strcmp(fSubsession.mediumName(), "audio") == 0)
