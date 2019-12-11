@@ -183,6 +183,7 @@ private:
   StreamCallback mCallback;
   wize::CBuffer  mSPS;
   wize::CBuffer  mPPS;
+  wize::CBuffer  mSEI;
   stream::CFrame mFrame;
   int            mSequence;
   u_int8_t* fReceiveBuffer;
@@ -651,9 +652,14 @@ void DummySink::afterGettingFrame(unsigned frameSize, unsigned numTruncatedBytes
                     mPPS.resize(0);
                     mPPS.putBuffer(nalHead, sizeof(nalHead));
                     mPPS.putBuffer(fReceiveBuffer, frameSize);
+                } else if (nalType == stream::NALU_TYPE_SEI) {
+                    // infof("sei comming! size(%d)\n", frameSize);
+                    mSEI.resize(0);
+                    mSEI.putBuffer(nalHead, sizeof(nalHead));
+                    mSEI.putBuffer(fReceiveBuffer, frameSize);
                 } else if (nalType == stream::NALU_TYPE_IDR) {
                     // create h264 video I frame
-                    auto totalsize = mSPS.size() + mPPS.size() + sizeof(nalHead) + frameSize + numTruncatedBytes;
+                    auto totalsize = mSPS.size() + mPPS.size() + mSEI.size() + sizeof(nalHead) + frameSize + numTruncatedBytes;
                     auto codec = stream::ENCODE_H264;
                     char frametype = 'I';
                     bool newformat = false;   // FIXME
@@ -665,8 +671,13 @@ void DummySink::afterGettingFrame(unsigned frameSize, unsigned numTruncatedBytes
                     uint8_t* ptr = (uint8_t*)mFrame.data();
                     memcpy(ptr, mSPS.getBuffer(), mSPS.size());
                     ptr += mSPS.size();
+                    mSPS.resize(0);
                     memcpy(ptr, mPPS.getBuffer(), mPPS.size());
                     ptr += mPPS.size();
+                    mPPS.resize(0);
+                    memcpy(ptr, mSEI.getBuffer(), mSEI.size());
+                    ptr += mSEI.size();
+                    mSEI.resize(0);
                     memcpy(ptr, nalHead, sizeof(nalHead));
                     ptr += sizeof(nalHead);
                     memcpy(ptr, fReceiveBuffer, frameSize);
@@ -690,7 +701,7 @@ void DummySink::afterGettingFrame(unsigned frameSize, unsigned numTruncatedBytes
 
                     ++mSequence;
                 } else {
-                    infof("ignored nal(%02x)\n", nalType);
+                    infof("ignored nal(%02x) bytes(%d)\n", nalType, frameSize);
                 }
             }
         }
