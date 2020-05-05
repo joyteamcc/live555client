@@ -28,7 +28,7 @@ int main(int argc, char *argv[])
 
     //char const* url = "rtsp://admin:closeli@192.168.1.10:8554/live/1/0";
     //char const* url = "rtsp://admin:123456@192.168.1.117/H264?ch=1&subtype=0";
-    char const* url = "rtsp://admin:admin@127.0.0.1:8554/live/0/enc0";
+    char const* url = "rtsp://admin:admin@127.0.0.1:8554/live/0/media0";
     auto rtspclient = live555client::createRtspStream(url);
 
     rtspclient->start();
