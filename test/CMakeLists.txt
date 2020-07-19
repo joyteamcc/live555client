@@ -12,11 +12,11 @@ LINK_DIRECTORIES(
     ${BOARD_LIBDIRS}
 )
 
-add_executable(test_rtsp_client
+add_executable(test_live_client
     test_rtsp_client.cpp
 )
 
-target_link_libraries(test_rtsp_client
+target_link_libraries(test_live_client
     live555client
     stream wize miniboost
     liveMedia BasicUsageEnvironment UsageEnvironment groupsock
