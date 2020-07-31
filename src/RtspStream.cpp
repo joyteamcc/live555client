@@ -562,7 +562,7 @@ void DummySink::afterGettingFrame(void* clientData, unsigned frameSize, unsigned
 }
 
 // If you don't want to see debugging output for each received frame, then comment out the following line:
-//#define DEBUG_PRINT_EACH_RECEIVED_FRAME 1
+// #define DEBUG_PRINT_EACH_RECEIVED_FRAME 1
 
 void DummySink::afterGettingFrame(unsigned frameSize, unsigned numTruncatedBytes,
 				  struct timeval presentationTime, unsigned /*durationInMicroseconds*/) {
@@ -792,17 +792,10 @@ bool CRtspStreamSource::stop()
 void CRtspStreamSource::threadProc()
 {
     tracef("__begin!\n");
-    int sleepms = 0;
+    int sleepms = 1000;
 
     while (true) {
       mEventLoopWatchVariable = 0;
-
-      tracef("wait (%d)ms to open rtsp client...\n", sleepms);
-      auto sig = waitSignal(sleepms);
-      if (sig == SIGNAL_EXIT) {
-        tracef("exit by user stop!\n");
-        break;
-      }
 
       // Begin by setting up our usage environment:
       TaskScheduler* scheduler = BasicTaskScheduler::createNew();
@@ -818,10 +811,12 @@ void CRtspStreamSource::threadProc()
       env->reclaim(); env = NULL;
       delete scheduler; scheduler = NULL;
 
-      if (sleepms == 0 || sleepms >= 8000) {
-        sleepms = 2000;
-      } else {
-        sleepms *= 2;
+      sleepms = (sleepms >= 8000) ? 2000 : sleepms * 2;
+      tracef("wait (%d)ms to retry open rtsp client...\n", sleepms);
+      auto sig = waitSignal(sleepms);
+      if (sig == SIGNAL_EXIT) {
+        tracef("exit by user stop!\n");
+        break;
       }
     }
 
@@ -830,7 +825,7 @@ void CRtspStreamSource::threadProc()
 
 void CRtspStreamSource::onStreamCallback(stream::CFrame const& frame)
 {
-    //tracepoint();
+    // tracepoint();
 #if 0
     auto info = frame.info();
     if (info->type == stream::STREAM_VIDEO)
