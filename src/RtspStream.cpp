@@ -32,7 +32,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 
 
-typedef boost::function<void(stream::CFrame const&)> StreamCallback;
+typedef wize::function<void(stream::CFrame const&)> StreamCallback;
 
 
 // Forward function definitions:
@@ -701,7 +701,7 @@ void DummySink::afterGettingFrame(unsigned frameSize, unsigned numTruncatedBytes
 
                     ++mSequence;
                 } else {
-                    infof("ignored nal(%02x) bytes(%d)\n", nalType, frameSize);
+                    // infof("ignored nal(%02x) bytes(%d)\n", nalType, frameSize);
                 }
             }
         }
